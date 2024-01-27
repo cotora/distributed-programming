@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.10)
 
 # set the project name
-project(Margo-Sample)
+project(RAFT)
 
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(MARGO REQUIRED IMPORTED_TARGET margo)
@@ -14,8 +14,6 @@ SET(CMAKE_BUILD_WITH_INSTALL_RPATH FALSE)
 SET(CMAKE_INSTALL_RPATH_USE_LINK_PATH TRUE)
 
 # add the executable
-add_executable(server server.c types.h)
-add_executable(client client.c types.h)
-add_executable(ring ring.c types.h)
-
-install(TARGETS server client)
+add_executable(raft_server raft_server.c types.h)
+add_executable(raft_client raft_client.c types.h)
+install(TARGETS raft_server raft_client)

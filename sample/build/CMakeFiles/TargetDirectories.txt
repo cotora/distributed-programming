@@ -1,0 +1,9 @@
+/home/mk11/workspace/sample/build/CMakeFiles/server.dir
+/home/mk11/workspace/sample/build/CMakeFiles/client.dir
+/home/mk11/workspace/sample/build/CMakeFiles/ring.dir
+/home/mk11/workspace/sample/build/CMakeFiles/edit_cache.dir
+/home/mk11/workspace/sample/build/CMakeFiles/rebuild_cache.dir
+/home/mk11/workspace/sample/build/CMakeFiles/list_install_components.dir
+/home/mk11/workspace/sample/build/CMakeFiles/install.dir
+/home/mk11/workspace/sample/build/CMakeFiles/install/local.dir
+/home/mk11/workspace/sample/build/CMakeFiles/install/strip.dir

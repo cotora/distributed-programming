@@ -1,0 +1,8 @@
+/home/mk11/workspace/raft/CMakeFiles/raft_server.dir
+/home/mk11/workspace/raft/CMakeFiles/raft_client.dir
+/home/mk11/workspace/raft/CMakeFiles/edit_cache.dir
+/home/mk11/workspace/raft/CMakeFiles/rebuild_cache.dir
+/home/mk11/workspace/raft/CMakeFiles/list_install_components.dir
+/home/mk11/workspace/raft/CMakeFiles/install.dir
+/home/mk11/workspace/raft/CMakeFiles/install/local.dir
+/home/mk11/workspace/raft/CMakeFiles/install/strip.dir

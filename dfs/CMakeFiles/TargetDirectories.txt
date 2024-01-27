@@ -1,0 +1,8 @@
+/home/mk11/workspace/dfs/CMakeFiles/dfs_client.dir
+/home/mk11/workspace/dfs/CMakeFiles/dfs_server.dir
+/home/mk11/workspace/dfs/CMakeFiles/edit_cache.dir
+/home/mk11/workspace/dfs/CMakeFiles/rebuild_cache.dir
+/home/mk11/workspace/dfs/CMakeFiles/list_install_components.dir
+/home/mk11/workspace/dfs/CMakeFiles/install.dir
+/home/mk11/workspace/dfs/CMakeFiles/install/local.dir
+/home/mk11/workspace/dfs/CMakeFiles/install/strip.dir
