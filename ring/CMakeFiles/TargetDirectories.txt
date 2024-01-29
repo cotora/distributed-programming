@@ -1,0 +1,7 @@
+/home/mk11/workspace/ring/CMakeFiles/ring.dir
+/home/mk11/workspace/ring/CMakeFiles/edit_cache.dir
+/home/mk11/workspace/ring/CMakeFiles/rebuild_cache.dir
+/home/mk11/workspace/ring/CMakeFiles/list_install_components.dir
+/home/mk11/workspace/ring/CMakeFiles/install.dir
+/home/mk11/workspace/ring/CMakeFiles/install/local.dir
+/home/mk11/workspace/ring/CMakeFiles/install/strip.dir
