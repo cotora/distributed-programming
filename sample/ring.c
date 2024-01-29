@@ -14,6 +14,8 @@
 typedef struct{
     int32_t n;
     hg_string_t *host;
+    int32_t bn;
+    hg_string_t *bhost;
 }  node_list_t;
 
 static void join(hg_handle_t h);
@@ -67,6 +69,18 @@ hg_proc_node_list_t(hg_proc_t proc, void *data)
         }
         if (hg_proc_get_op(proc) == HG_FREE)
                 free(l->host);
+        ret = hg_proc_int32_t(proc,&l->bn);
+        if(ret != HG_SUCCESS)
+                return (ret);
+        if(hg_proc_get_op(proc) == HG_DECODE)
+                l->bhost= malloc(sizeof(hg_string_t) * l->bn);
+        for(i=0; i < l->bn; ++i) {
+                ret = hg_proc_hg_string_t(proc,&l->bhost[i]);
+                if(ret != HG_SUCCESS)
+                        return (ret);
+        }
+        if(hg_proc_get_op(proc) == HG_FREE)
+                free(l->bhost);
         return (ret);
 }
 
@@ -78,37 +92,36 @@ typedef struct{
     int id;
     int list_flag;
     bool is_coordinator;
+    int bn;
+    char** bhost;
 } node;
 
 node n;
 
-int host_n=0;
-char** host;
-
 void set_host(int hn,char* ht[]){
-    for(int i=0;i<host_n;i++){
-        free(host[i]);
+    for(int i=0;i<n.bn;i++){
+        free(n.bhost[i]);
     }
-    free(host);
-    host=malloc(sizeof(char*)*hn);
+    free(n.bhost);
+    n.bhost=malloc(sizeof(char*)*hn);
     for(int i=0;i<hn;i++){
-        host[i]=strdup(ht[i]);
+        n.bhost[i]=strdup(ht[i]);
     }
-    host_n=hn;
+    n.bn=hn;
 }
 
 int set_more_next_node(){
-    if(host_n==0){
+    if(n.bn==0){
         return 0;
     }
     int my_ind=-1;
-    for(int i=0;i<host_n;i++){
-        if(strcmp(host[i],n.self)==0){
+    for(int i=0;i<n.bn;i++){
+        if(strcmp(n.bhost[i],n.self)==0){
             my_ind=i;
         }
     }
-    snprintf(n.next,strlen(host[(my_ind+2)%host_n])+1,"%s",host[(my_ind+2)%host_n]);
-    call_set_prev(host[(my_ind+2)%host_n],n.self);
+    snprintf(n.next,strlen(n.bhost[(my_ind+2)%n.bn])+1,"%s",n.bhost[(my_ind+2)%n.bn]);
+    call_set_prev(n.bhost[(my_ind+2)%n.bn],n.self);
     return 1;
 }
 
@@ -134,6 +147,8 @@ void ring_init(margo_instance_id mid,char* addr_str){
     snprintf(n.prev,sizeof(n.prev),"%s",addr_str);
     snprintf(n.next,sizeof(n.next),"%s",addr_str);
     n.is_coordinator=false;
+    n.bn=0;
+    n.bhost=NULL;
 }
 
 void
@@ -152,6 +167,11 @@ list_ring()
     initialList.host=malloc(sizeof(hg_string_t));
     initialList.host[0]=malloc(PATH_MAX);
     snprintf(initialList.host[0],sizeof(n.self),"%s",n.self);
+    initialList.bn=n.bn;
+    initialList.bhost=malloc(sizeof(hg_string_t)*initialList.bn);
+    for(int i=0;i<initialList.bn;i++){
+        initialList.bhost[i]=strdup(n.bhost[i]);
+    }
     n.list_flag=1;
     if(call_list(n.next,initialList)!=HG_SUCCESS){
         if(set_more_next_node()){
@@ -164,6 +184,10 @@ list_ring()
     }
     free(initialList.host[0]);
     free(initialList.host);
+    for(int i=0;i<initialList.bn;i++){
+        free(initialList.bhost[i]);
+    }
+    free(initialList.bhost);
 }
 
 void
@@ -556,6 +580,8 @@ list(hg_handle_t h)
         //printf("We've come full circle.\n");
     }
     else{
+        set_host(in.bn,in.bhost);
+
         node_list_t out;
         out.n=in.n+1;
         out.host=malloc(sizeof(hg_string_t)*out.n);
@@ -569,6 +595,8 @@ list(hg_handle_t h)
         snprintf(out.host[in.n],strlen(n.self)+1,"%s",n.self);
         //printf(n)
 
+        out.bn=in.bn;
+        out.bhost=in.bhost;
     
         if(call_list(n.next,out)!=HG_SUCCESS){
             if(set_more_next_node()){
