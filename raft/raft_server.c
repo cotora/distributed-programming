@@ -42,6 +42,8 @@ struct env {
     hg_id_t AppendEntries_rpc,RequestVote_rpc,InstallSnapshot_rpc,Submit_rpc;
 } env;
 
+ABT_mutex mutex;
+
 //サーバーの状態を表す型
 typedef enum
 {
@@ -88,6 +90,7 @@ double getRandomTimeout(){
 
 //状態をストレージから取得する関数
 void getStateFromStorage(){
+
     FILE *fp;
     char *addr_path=strdup(env.addr_str);
     for(int i=0;i<strlen(addr_path);i++){
@@ -99,11 +102,15 @@ void getStateFromStorage(){
         fprintf(fp,"%d %d\n",0,-1);
         fprintf(fp,"%d\n",0);
         fclose(fp);
+
+        ABT_mutex_lock(mutex);
         state.n=0;
         state.currentTerm=0;
         state.votedFor=-1;
+        ABT_mutex_unlock(mutex);
     }
     else{
+        ABT_mutex_lock(mutex);
         fscanf(fp,"%d %d",&state.currentTerm,&state.votedFor);
         fscanf(fp,"%d",&state.n);
         state.log=malloc(sizeof(logEntry)*state.n);
@@ -114,6 +121,7 @@ void getStateFromStorage(){
             fscanf(fp,"%d %s",&state.log[i].term,state.log[i].command);
         }
         fclose(fp);
+        ABT_mutex_unlock(mutex);
     }
 
     free(addr_path);
@@ -121,18 +129,27 @@ void getStateFromStorage(){
 
 //状態をストレージに保存する関数
 void setStateToStorage(){
+
+    ABT_mutex_lock(mutex);
+    printf("currentTerm:%d\n",state.currentTerm);
+    ABT_mutex_unlock(mutex);
+
     char *addr_path=strdup(env.addr_str);
     for(int i=0;i<strlen(addr_path);i++){
         if(addr_path[i]=='/')addr_path[i]='_';
     }
+
     FILE *fp=fopen(addr_path,"w");
+
     if(fp!=NULL){
+        ABT_mutex_lock(mutex);
         fprintf(fp,"%d %d\n",state.currentTerm,state.votedFor);
         fprintf(fp,"%d\n",state.n);
         for(int i=0;i<state.n;i++){
             fprintf(fp,"%d %s\n",state.log[i].term,state.log[i].command);
         }
         fclose(fp);
+        ABT_mutex_unlock(mutex);
     }
 
     free(addr_path);
@@ -143,6 +160,7 @@ void init_state(){
     //ストレージからの状態の取得
     getStateFromStorage();
 
+    ABT_mutex_lock(mutex);
     state.commitIndex=-1;
     state.lastApplied=-1;
     state.serverState=FOLLOWER;
@@ -156,6 +174,7 @@ void init_state(){
     state.nextIndex=malloc(sizeof(int)*config.n);
     state.matchIndex=malloc(sizeof(int)*config.n);
     state.leaderId=-1;
+    ABT_mutex_unlock(mutex);
 }
 
 //設定の初期化
@@ -170,6 +189,8 @@ void init_config(){
 
 //ログの最後のエントリのindexとtermを返す
 void lastLogIndexAndTerm(int *lastLogIndex,int *lastLogTerm){
+
+    ABT_mutex_lock(mutex);
     if(state.n>0){
         *lastLogIndex=state.n-1;
         *lastLogTerm=state.log[state.n-1].term;
@@ -178,32 +199,44 @@ void lastLogIndexAndTerm(int *lastLogIndex,int *lastLogTerm){
         *lastLogIndex=-1;
         *lastLogTerm=-1;
     }
+    ABT_mutex_unlock(mutex);
 }
 
 //Followerに転向する処理
 void becomeFollower(int term){
+
+    ABT_mutex_lock(mutex);
+    printf("become follower currentTerm:%d,term:%d\n",state.currentTerm,term);
     state.currentTerm=term;
     state.votedFor=-1;
     state.serverState=FOLLOWER;
+    ABT_mutex_unlock(mutex);
 }
 
 //Followerの動作
 void startFollower(){
-    printf("star follower\n");
+    
+    printf("start follower\n");
     time_t prev_time=time(NULL);
     while(1){
         time_t cur_time=time(NULL);
-
+        
+        ABT_mutex_lock(mutex);
         if(state.rpcFlag){
             //RPCが来ていたらタイマーをリセット
             prev_time=cur_time;
             printf("rpc detected\n");
             state.rpcFlag=false;
+            ABT_mutex_unlock(mutex);
         }
+        ABT_mutex_unlock(mutex);
 
         if(abs(cur_time-prev_time)>state.timeout){
             //タイムアウト時間が過ぎたらCandidateに転向
+            printf("become candidate\n");
+            ABT_mutex_lock(mutex);
             state.serverState=CANDIDATE;
+            ABT_mutex_unlock(mutex);
             return;
         }
     }
@@ -211,45 +244,87 @@ void startFollower(){
 
 //選出の開始
 void startElection(){
+
     printf("start election\n");
 
+    double waitTime=getRandomTimeout();
+    margo_thread_sleep(env.mid,waitTime*1000);
+
+    ABT_mutex_lock(mutex);
+    if(state.serverState==FOLLOWER){
+        ABT_mutex_unlock(mutex);
+        return;
+    }
+    ABT_mutex_unlock(mutex);
+
     //currentTermを1増やす
+    ABT_mutex_lock(mutex);
     state.currentTerm++;
+    ABT_mutex_unlock(mutex);
 
     //ランダムなタイムアウト時間を設定
     double timeout=getRandomTimeout();
     double prevTime=time(NULL);
 
+    ABT_mutex_lock(mutex);
     state.votedFor=state.id;
+    ABT_mutex_unlock(mutex);
+
     int votesReceived=1;
 
     //すべてのサーバーにRequestVote RPCを送信
     for(int i=0;i<config.n;i++){
-        if(i==state.id)continue;
+        if(i==state.id){
+            setStateToStorage();
+            continue;
+        }
 
         request_vote_out_t out;
+        out.voteGranted=false;
         call_RequestVote(config.server[i],&out);
 
+        ABT_mutex_lock(mutex);
         //レスポンスのtermがcurrentTermより大きければFollowerに転向する
         if(out.term>state.currentTerm){
+            ABT_mutex_unlock(mutex);
             becomeFollower(out.term);
             return;
         }
+        ABT_mutex_unlock(mutex);
+
+        ABT_mutex_lock(mutex);
+        //Follower状態になっていたら選挙を中止
+        if(state.serverState==FOLLOWER){
+            ABT_mutex_unlock(mutex);
+            return;
+        }
+        ABT_mutex_unlock(mutex);
 
         if(out.voteGranted && i!=state.id)votesReceived++;
 
         //タイムアウト時間を過ぎていたら新しい選挙を開始
         if(time(NULL)-prevTime>timeout){
+            printf("election timeout\n");
             return;
         }
     }
 
+    ABT_mutex_lock(mutex);
     //Follower状態になっていたら選挙を中止
-    if(state.serverState==FOLLOWER)return;
+    if(state.serverState==FOLLOWER){
+        ABT_mutex_unlock(mutex);
+        return;
+    }
+    ABT_mutex_unlock(mutex);
+
+    printf("votesReceived:%d\n",votesReceived);
 
     //投票数が過半数以上なら当選し、Leader状態に転向する
     if(votesReceived>=(config.n/2)+1){
+        printf("become leader. voteCount:%d\n",votesReceived);
+        ABT_mutex_lock(mutex);
         state.serverState=LEADER;
+        ABT_mutex_unlock(mutex);
         return;
     }
 
@@ -263,31 +338,47 @@ void startCandidate(){
     //Candidate状態である限り、選挙を繰り返す
     while(1){
         startElection();
-        if(state.serverState!=CANDIDATE)break;
+
+        ABT_mutex_lock(mutex);
+        if(state.serverState!=CANDIDATE){
+            ABT_mutex_unlock(mutex);
+            break;
+        }
+        ABT_mutex_unlock(mutex);
     }
 }
 
 //Leaderの動作
 void startLeader(){
+    
     printf("start leader\n");
     //nextIndexとmatchIndexを初期化
+    ABT_mutex_lock(mutex);
     state.nextIndex=realloc(state.nextIndex,sizeof(int)*config.n);
     state.matchIndex=realloc(state.matchIndex,sizeof(int)*config.n);
+    ABT_mutex_unlock(mutex);
+
     for(int i=0;i<config.n;i++){
+        ABT_mutex_lock(mutex);
         state.nextIndex[i]=state.n;
         state.matchIndex[i]=-1;
+        ABT_mutex_unlock(mutex);
     }
 
     while(1){
-        margo_thread_sleep(env.mid,50);
+        margo_thread_sleep(env.mid,10);
 
         //各サーバにAppendEntries RPCを送信
         for(int i=0;i<config.n;i++){
 
-            if(i==state.id)continue;
+            if(i==state.id){
+                setStateToStorage();
+                continue;
+            }
 
             append_entries_out_t out;
 
+            ABT_mutex_lock(mutex);
             //送るべきエントリがあった場合
             if(state.n-1>=state.nextIndex[i]){
 
@@ -304,6 +395,7 @@ void startLeader(){
                 for(int j=0;j<nLog;j++){
                     entries[j]=state.log[state.nextIndex[i]+j];
                 }
+                ABT_mutex_unlock(mutex);
 
                 //Append Entries RPCの送信
                 call_AppendEntries(config.server[i],&out,nLog,entries,prevLogIndex,prevLogTerm);
@@ -311,28 +403,45 @@ void startLeader(){
                 //成功した場合
                 if(out.success){
                     //送信先のサーバーのnextIndexとmatchIndexを更新
+                    ABT_mutex_lock(mutex);
                     state.nextIndex[i]+=nLog;
                     state.matchIndex[i]=state.nextIndex[i]-1;
+                    ABT_mutex_unlock(mutex);
                 }
                 //失敗した場合
                 else{
                     //nextIndexをデクリメントする
+                    ABT_mutex_lock(mutex);
                     state.nextIndex[i]--;
+                    ABT_mutex_unlock(mutex);
                 }
 
                 free(entries);
             }
             //送るべきエントリがない場合(空のAppend Entries)
             else{
+                ABT_mutex_unlock(mutex);
                 //Append Entries RPCの送信
                 call_AppendEntries(config.server[i],&out,0,NULL,-1,-1);
             }
 
+            ABT_mutex_lock(mutex);
+
             //送信先のサーバのcurrentTermがリーダーのcurrentTermより大きい場合、Followerに転向する
             if(out.term>state.currentTerm){
+                ABT_mutex_unlock(mutex);
                 becomeFollower(out.term);
                 return;
             }
+
+            if(state.serverState==FOLLOWER){
+                ABT_mutex_unlock(mutex);
+                return;
+            }
+
+            ABT_mutex_unlock(mutex);
+
+            ABT_mutex_lock(mutex);
 
             //N > commitIndex、過半数の matchIndex[i] ≧ N、log[N].term == currentTerm となる N が存在する場合: commitIndex = N に設定
             for(int j=state.n-1;j>=0;j--){
@@ -354,6 +463,8 @@ void startLeader(){
                 state.lastApplied++;
             }
 
+            ABT_mutex_unlock(mutex);
+
         }
     }
 }
@@ -361,6 +472,7 @@ void startLeader(){
 int
 main(int argc, char *argv[])
 {
+        ABT_mutex_create(&mutex);
 
         //必要な変数の宣言
         char addr_str[PATH_MAX];
@@ -387,12 +499,11 @@ main(int argc, char *argv[])
         printf("Server running at address %s\n", addr_str);
         env.addr_str=addr_str;
 
+        //設定の初期化
+        init_config();
 
         //状態の初期化
         init_state();
-
-        //設定の初期化
-        init_config();
 
         //RPCの登録
         env.mid = mid;
@@ -408,16 +519,20 @@ main(int argc, char *argv[])
 
         //Raftの動作を開始
         while(1){
+            ABT_mutex_lock(mutex);
             if(state.serverState==FOLLOWER){
                 //Follower状態の開始
+                ABT_mutex_unlock(mutex);
                 startFollower();
             }
             else if(state.serverState==CANDIDATE){
                 //Candidate状態の開始
+                ABT_mutex_unlock(mutex);
                 startCandidate();
             }
             else{
                 //Leader状態の開始
+                ABT_mutex_unlock(mutex);
                 startLeader();
             }
         }
@@ -436,9 +551,15 @@ call_AppendEntries(const char *addr,append_entries_out_t *out2,int nLog,logEntry
     append_entries_in_t in;
     append_entries_out_t out;
 
+
+    printf("call AppendEntries\n");
+
     //引数を設定する
+    ABT_mutex_lock(mutex);
     in.term=state.currentTerm;
     in.leaderId=state.id;
+    ABT_mutex_unlock(mutex);
+
     in.prevLogIndex=prevLogIndex;
     in.prevLogTerm=prevLogTerm;
     in.n=nLog;
@@ -447,7 +568,10 @@ call_AppendEntries(const char *addr,append_entries_out_t *out2,int nLog,logEntry
         in.entries[i].term=entries[i].term;
         in.entries[i].command=strdup(entries[i].command);
     }
+
+    ABT_mutex_lock(mutex);
     in.leaderCommit=state.commitIndex;
+    ABT_mutex_unlock(mutex);
 
     ret=margo_addr_lookup(env.mid,addr,&serv_addr);
 
@@ -493,9 +617,14 @@ call_RequestVote(const char *addr,request_vote_out_t *out2){
     request_vote_in_t in;
     request_vote_out_t out;
 
+    printf("call RequestVote\n");
+
     //引数を設定する
+    ABT_mutex_lock(mutex);
     in.term=state.currentTerm;
     in.candidateId=state.id;
+    ABT_mutex_unlock(mutex);
+
     lastLogIndexAndTerm(&in.lastLogIndex,&in.lastLogTerm);
 
     ret=margo_addr_lookup(env.mid,addr,&serv_addr);
@@ -568,29 +697,45 @@ AppendEntries(hg_handle_t h){
         append_entries_in_t in;
         append_entries_out_t out;
 
-        //printf("AppendEntries RPC\n");
-
-        state.rpcFlag=true;
-
         //RPCの引数を取得する
         ret = margo_get_input(h, &in);
         assert(ret == HG_SUCCESS);
 
+        printf("AppendEntries RPC term:%d,n:%d\n",in.term,in.n);
+
+        ABT_mutex_lock(mutex);
+        state.rpcFlag=true;
+        ABT_mutex_unlock(mutex);
+
+
+        ABT_mutex_lock(mutex);
         //term<currentTermの場合はfalseと応答する
         if(in.term<state.currentTerm){
+            printf("my term is bigger. currentTerm:%d,in.term:%d\n",state.currentTerm,in.term);
             out.term=state.currentTerm;
             out.success=false;
+            ABT_mutex_unlock(mutex);
         }
         else{
+            ABT_mutex_unlock(mutex);
+
+            ABT_mutex_lock(mutex);
             //送り主のtermがcurrentTermより大きい場合、Followerに転向する
             if(state.currentTerm<in.term){
+                ABT_mutex_unlock(mutex);
                 becomeFollower(in.term);
             }
+            ABT_mutex_unlock(mutex);
 
+            ABT_mutex_lock(mutex);
             //サーバーの状態がCandidateのときは、termが等しくてもFollowerに転向する
-            if(state.currentTerm==in.term && state.serverState!=FOLLOWER){
+            if(state.currentTerm==in.term && state.serverState==CANDIDATE){
+                ABT_mutex_unlock(mutex);
                 becomeFollower(in.term);
             }
+            ABT_mutex_unlock(mutex);
+
+            ABT_mutex_lock(mutex);
 
             out.term=state.currentTerm;
 
@@ -605,11 +750,11 @@ AppendEntries(hg_handle_t h){
                 for(int i=0;i<in.n;i++){
                     if(state.n>baseIndex+i && state.log[baseIndex+i].term!=in.term){
                         state.n=baseIndex+i;
-                        state.log=realloc(state.log,state.n);
+                        state.log=realloc(state.log,state.n*sizeof(logEntry));
                     }
                     if(state.n<=baseIndex+i){
                         state.n++;
-                        state.log=realloc(state.log,state.n);
+                        state.log=realloc(state.log,state.n*sizeof(logEntry));
                         state.log[state.n-1].command=strdup(in.entries[i].command);
                         state.log[state.n-1].term=in.entries[i].term;
                     }
@@ -626,6 +771,8 @@ AppendEntries(hg_handle_t h){
                     state.lastApplied++;
                 }
             }
+
+            ABT_mutex_unlock(mutex);
         }
 
         //応答する前に状態をストレージに保存する
@@ -649,33 +796,47 @@ RequestVote(hg_handle_t h){
         hg_return_t ret;
         request_vote_in_t in;
 
-        state.rpcFlag=true;
-
-        printf("RequestVote RPC\n");
-
         //RPCの引数を取得する
         ret = margo_get_input(h, &in);
         assert(ret == HG_SUCCESS);
 
+        printf("RequestVote RPC term:%d,candidateId:%d,lastLogIndex:%d,lastLogTerm:%d\n",in.term,in.candidateId,in.lastLogIndex,in.lastLogTerm);
+
+        ABT_mutex_lock(mutex);
+        state.rpcFlag=true;
+        ABT_mutex_unlock(mutex);
+
         request_vote_out_t out;
+
+        ABT_mutex_lock(mutex);
 
         //term<currentTermの場合はfalseと応答する
         if(in.term<state.currentTerm){
             out.term=state.currentTerm;
             out.voteGranted=false;
+            ABT_mutex_unlock(mutex);
         }
         else{
+            ABT_mutex_unlock(mutex);
+
+            ABT_mutex_lock(mutex);
             //送り主のtermがcurrentTermより大きい場合、Followerに転向する
             if(state.currentTerm<in.term){
+                ABT_mutex_unlock(mutex);
                 becomeFollower(in.term);
             }
+            ABT_mutex_unlock(mutex);
 
+            ABT_mutex_lock(mutex);
             out.term=state.currentTerm;
+            ABT_mutex_unlock(mutex);
 
-            int lastLogIndex;
-            int lastLogTerm;
+            int lastLogIndex=0;
+            int lastLogTerm=0;
 
             lastLogIndexAndTerm(&lastLogIndex,&lastLogTerm);
+
+            ABT_mutex_lock(mutex);
 
             //votedForが-1またはcandidateIdであり、候補者のログが少なくとも受信者のログと同じように最新のものである場合、投票を許可する
             if((state.votedFor==-1 || state.votedFor==in.candidateId) && (in.lastLogTerm>lastLogTerm || (in.lastLogTerm==lastLogTerm && in.lastLogIndex>=lastLogIndex))){
@@ -685,6 +846,8 @@ RequestVote(hg_handle_t h){
             else{
                 out.voteGranted=false;
             }
+
+            ABT_mutex_unlock(mutex);
         }
 
         //応答する前に状態をストレージに保存する
@@ -730,28 +893,36 @@ Submit(hg_handle_t h){
     ret = margo_get_input(h, &in);
     assert(ret==HG_SUCCESS);
 
+    ABT_mutex_lock(mutex);
+
     //サーバーがLeaderの場合はコマンドをログに追加する
-    if(state.serverState==LEADER || state.leaderId==state.id){
+    if(state.serverState==LEADER){
         out=true;
 
         printf("accepted command from client\n");
 
         int index=state.n;
+
         state.n++;
-        state.log=realloc(state.log,state.n);
+        state.log=realloc(state.log,state.n*sizeof(logEntry));
         state.log[state.n-1].term=state.currentTerm;
         state.log[state.n-1].command=strdup(in);
+        ABT_mutex_unlock(mutex);
 
         //コマンドがコミットされたらクライアントに応答する
         while(1){
+            ABT_mutex_lock(mutex);
             if(state.lastApplied>=index){
+                ABT_mutex_unlock(mutex);
                 break;
             }
+            ABT_mutex_unlock(mutex);
         }
     }
     //サーバーがLeader以外ならLeaderにリダイレクトする
     else if(state.serverState!=LEADER && state.leaderId!=-1){
         call_Submit(config.server[state.leaderId],in,&out);
+        ABT_mutex_unlock(mutex);
     }
 
     ret = margo_respond(h, &out);

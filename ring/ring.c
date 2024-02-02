@@ -87,12 +87,14 @@ hg_proc_node_list_t(hg_proc_t proc, void *data)
 }
 
 
+
+
 typedef struct{
     char self[PATH_MAX];
     char next[PATH_MAX];
     char prev[PATH_MAX];
     int id;
-    int list_flag;
+    bool list_flag;
     bool is_coordinator;
     int bn;
     char** bhost;
@@ -135,15 +137,8 @@ int hash(char* s){
     return res;
 }
 
-void ring_init(margo_instance_id mid,char* addr_str){
-    n.list_flag=0;
-    /*
-    int not_num=0;
-    while(!isdigit(addr_str[not_num])){
-        not_num++;
-    }
-    n.id=atoi(addr_str+not_num);
-    */
+void init_ring(margo_instance_id mid,char* addr_str){
+    n.list_flag=false;
     n.id=hash(addr_str);
     snprintf(n.self,sizeof(n.self),"%s",addr_str);
     snprintf(n.prev,sizeof(n.prev),"%s",addr_str);
@@ -174,7 +169,7 @@ list_ring()
     for(int i=0;i<initialList.bn;i++){
         initialList.bhost[i]=strdup(n.bhost[i]);
     }
-    n.list_flag=1;
+    n.list_flag=true;
     if(call_list(n.next,initialList)!=HG_SUCCESS){
         if(set_more_next_node()){
             printf("The next has been reconnected.\n");
@@ -200,6 +195,8 @@ election_ring()
     
     initialList.host=malloc(sizeof(hg_string_t));
     initialList.host[0]=malloc(PATH_MAX);
+    initialList.bn=0;
+    initialList.bhost=NULL;
     snprintf(initialList.host[0],sizeof(n.self),"%s",n.self);
     if(call_election(n.next,initialList)!=HG_SUCCESS){
         if(set_more_next_node()){
@@ -221,7 +218,7 @@ void leave(){
     call_set_prev(n.next,n.prev);
 }
 
-void hearbeat(){
+void heartbeat(){
     while(1){
         margo_thread_sleep(env.mid,3000);
         list_ring();
@@ -288,7 +285,7 @@ main(int argc, char *argv[])
         //margo_registered_disable_response(mid, env.election_rpc, HG_TRUE);
         env.coordinator_rpc = MARGO_REGISTER(mid, "coordinator", node_list_t, int32_t,coordinator);
         //margo_registered_disable_response(mid, env.coordinator_rpc, HG_TRUE);
-        ring_init(mid, addr_str);
+        init_ring(mid, addr_str);
         if (argc > 1)
                 join_ring(argv[1]);
 
@@ -309,7 +306,7 @@ main(int argc, char *argv[])
                 if(n.list_flag){
                     prev_time=cur_time;
                     printf("list detected.\n");
-                    n.list_flag=0;
+                    n.list_flag=false;
                 }
                 //printf("%ld %ld\n",prev_time,cur_time);
             }
@@ -432,6 +429,9 @@ call_election(const char *addr,node_list_t out){
     hg_addr_t serv_addr;
     int32_t res;
 
+    out.bn=0;
+    out.bhost=NULL;
+
     ret=margo_addr_lookup(env.mid,addr,&serv_addr);
     if(ret!=HG_SUCCESS)return (ret);
     ret=margo_create(env.mid,serv_addr,env.election_rpc,&h);
@@ -459,6 +459,9 @@ call_coordinator(const char *addr,node_list_t out){
     hg_return_t ret,ret2;
     hg_addr_t serv_addr;
     int32_t res;
+
+    out.bn=0;
+    out.bhost=NULL;
 
     ret=margo_addr_lookup(env.mid,addr,&serv_addr);
     if(ret!=HG_SUCCESS)return (ret);
@@ -491,11 +494,19 @@ join(hg_handle_t h)
         ret=margo_get_input(h,&in);
         assert(ret==HG_SUCCESS);
 
+        ABT_mutex mutex;
+        ABT_mutex_create(&mutex);
+
+        ABT_mutex_lock(mutex);
+
         call_set_next(n.prev,in);
 
         out=malloc(sizeof(char)*PATH_MAX);
         snprintf(out,strlen(n.prev)+1,"%s",n.prev);
         snprintf(n.prev,strlen(in)+1,"%s",in);
+
+        ABT_mutex_unlock(mutex);
+
         ret=margo_free_input(h,&in);
         assert(ret==HG_SUCCESS);
 
@@ -565,7 +576,7 @@ list(hg_handle_t h)
     ret=margo_respond(h,&res);
     assert(ret==HG_SUCCESS);
 
-    n.list_flag=1;
+    n.list_flag=true;
 
     if(strcmp(in.host[0],n.self)==0){
         printf("[ ");
@@ -721,7 +732,7 @@ coordinator(hg_handle_t h)
     if(max_id==n.id){
         n.is_coordinator=true;
         printf("I am coordinator. : %d\n",n.id);
-        hearbeat();
+        heartbeat();
     }
     else{
         if(call_coordinator(n.next,in)!=HG_SUCCESS){
