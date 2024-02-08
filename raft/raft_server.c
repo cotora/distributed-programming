@@ -926,7 +926,7 @@ Submit(hg_handle_t h){
 
     //サーバーがLeaderの場合はコマンドをログに追加する
     if(state.serverState==LEADER){
-        out=true;
+        out=0;
 
         printf("accepted command from client\n");
 
