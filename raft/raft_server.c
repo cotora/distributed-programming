@@ -222,9 +222,6 @@ void init_state(){
 
     //ストレージからの状態の取得
     getStateFromStorage();
-
-    //ステートマシンの初期化
-    initStateMachine();
 }
 
 //設定の初期化
@@ -555,6 +552,9 @@ main(int argc, char *argv[])
 
         //状態の初期化
         init_state();
+
+        //ステートマシンの初期化
+        initStateMachine();
 
         //RPCの登録
         env.mid = mid;
