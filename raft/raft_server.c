@@ -9,7 +9,7 @@
 #include <signal.h>
 #include <ctype.h>
 #include <stdbool.h>
-
+#include <sys/time.h>
 #include "types.h"
 
 
@@ -125,7 +125,7 @@ void getStateFromStorage(){
 void setStateToStorage(){
 
     ABT_mutex_lock(mutex);
-    printf("currentTerm:%d\n",state.currentTerm);
+    //printf("currentTerm:%d\n",state.currentTerm);
     ABT_mutex_unlock(mutex);
 
     char addr_path[10];
@@ -260,25 +260,39 @@ void becomeFollower(int term){
     ABT_mutex_unlock(mutex);
 }
 
+double calcElapsedTime(struct timespec prev_time){
+    struct timespec cur_time;
+    clock_gettime(CLOCK_REALTIME,&cur_time);
+    unsigned int sec=cur_time.tv_sec-prev_time.tv_sec;
+    int nsec=cur_time.tv_nsec-prev_time.tv_nsec;
+    double dsec=(double)sec+(double)nsec/(1000*1000*1000);
+    return dsec;
+}
+
 //Followerの動作
 void startFollower(){
     
     printf("start follower\n");
-    time_t prev_time=time(NULL);
+    struct timespec prev_time;
+    clock_gettime(CLOCK_REALTIME,&prev_time);
+
     while(1){
-        time_t cur_time=time(NULL);
+        struct timespec cur_time;
+        clock_gettime(CLOCK_REALTIME,&cur_time);
         
         ABT_mutex_lock(mutex);
         if(state.rpcFlag){
             //RPCが来ていたらタイマーをリセット
             prev_time=cur_time;
-            printf("rpc detected\n");
+            //printf("rpc detected\n");
             state.rpcFlag=false;
             ABT_mutex_unlock(mutex);
         }
         ABT_mutex_unlock(mutex);
 
-        if(abs(cur_time-prev_time)>state.timeout){
+        double dsec=calcElapsedTime(prev_time);
+
+        if(dsec>state.timeout){
             //タイムアウト時間が過ぎたらCandidateに転向
             printf("become candidate\n");
             ABT_mutex_lock(mutex);
@@ -311,7 +325,8 @@ void startElection(){
 
     //ランダムなタイムアウト時間を設定
     double timeout=getRandomTimeout();
-    double prevTime=time(NULL);
+    struct timespec prev_time;
+    clock_gettime(CLOCK_REALTIME,&prev_time);
 
     ABT_mutex_lock(mutex);
     state.votedFor=state.id;
@@ -349,8 +364,10 @@ void startElection(){
 
         if(out.voteGranted && i!=state.id)votesReceived++;
 
+        double dsec=calcElapsedTime(prev_time);
+
         //タイムアウト時間を過ぎていたら新しい選挙を開始
-        if(time(NULL)-prevTime>timeout){
+        if(dsec>timeout){
             printf("election timeout\n");
             return;
         }
@@ -375,7 +392,10 @@ void startElection(){
         return;
     }
 
-    while(time(NULL)-prevTime<timeout){
+    double dsec=calcElapsedTime(prev_time);
+
+    while(dsec<timeout){
+        dsec=calcElapsedTime(prev_time);
     }
 }
 
@@ -600,7 +620,7 @@ call_AppendEntries(const char *addr,append_entries_out_t *out2,int nLog,logEntry
     append_entries_out_t out;
 
 
-    printf("call AppendEntries\n");
+    //printf("call AppendEntries\n");
 
     //引数を設定する
     ABT_mutex_lock(mutex);
@@ -745,7 +765,7 @@ AppendEntries(hg_handle_t h){
         ret = margo_get_input(h, &in);
         assert(ret == HG_SUCCESS);
 
-        printf("AppendEntries RPC term:%d,n:%d\n",in.term,in.n);
+        //printf("AppendEntries RPC term:%d,n:%d\n",in.term,in.n);
 
         ABT_mutex_lock(mutex);
         state.rpcFlag=true;
@@ -928,7 +948,7 @@ Submit(hg_handle_t h){
     if(state.serverState==LEADER){
         out=0;
 
-        printf("accepted command from client\n");
+        printf("accepted command from client : %d\n",in);
 
         int index=state.n;
 
