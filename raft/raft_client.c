@@ -12,7 +12,7 @@
 #include "types.h"
 
 static hg_return_t
-call_Submit(const char *addr,hg_string_t in,hg_bool_t *res);
+call_Submit(const char *addr,int32_t in,int32_t *res);
 
 //margoに関する情報を保持するための構造体
 struct env {
@@ -43,23 +43,18 @@ main(int argc,char *argv[]){
 
     //RPCの登録
     env.mid = mid;
-    env.Submit_rpc=MARGO_REGISTER(mid, "Submit", hg_string_t, hg_bool_t,
+    env.Submit_rpc=MARGO_REGISTER(mid, "Submit", int32_t,int32_t,
             NULL);
 
     printf("set completed\n");
 
     while(1){
         char serv_addr[100];
-        char command[100];
-        scanf("%s %s",serv_addr,command);
-        hg_bool_t res;
+        int command;
+        scanf("%s %d",serv_addr,&command);
+        int32_t res;
         call_Submit(serv_addr,command,&res);
-        if(res){
-            printf("Yes\n");
-        }
-        else{
-            printf("No\n");
-        }
+        printf("res : %d\n",res);
     }
 
     margo_wait_for_finalize(mid);
@@ -69,11 +64,11 @@ main(int argc,char *argv[]){
 
 //Submit RPCを呼び出す関数
 static hg_return_t
-call_Submit(const char *addr,hg_string_t in,hg_bool_t *res){
+call_Submit(const char *addr,int32_t in,int32_t *res){
     hg_handle_t h;
     hg_return_t ret,ret2;
     hg_addr_t serv_addr;
-    hg_bool_t out;
+    int32_t out;
 
     printf("call Submit RPC\n");
 

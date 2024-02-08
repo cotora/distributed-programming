@@ -27,19 +27,19 @@ DECLARE_MARGO_RPC_HANDLER(Submit)
 
 //ログを表す構造体
 typedef struct logEntry{
-    char *command;
+    int command;
     int term;
 } logEntry;
 
 static hg_return_t call_RequestVote(const char* addr,request_vote_out_t* out);
 static hg_return_t call_AppendEntries(const char* addr,append_entries_out_t* out,int nLog,logEntry *entries,int prevLogIndex,int prevLogTerm);
-static hg_return_t call_Submit(const char* addr,hg_string_t in,hg_bool_t *res);
+static hg_return_t call_Submit(const char* addr,int32_t in,int32_t *res);
 
 //margoに関する情報を保持するための構造体
 struct env {
     margo_instance_id mid;
     char *addr_str;
-    hg_id_t AppendEntries_rpc,RequestVote_rpc,InstallSnapshot_rpc,Submit_rpc;
+    hg_id_t AppendEntries_rpc,RequestVote_rpc,Submit_rpc;
 } env;
 
 ABT_mutex mutex;
@@ -92,10 +92,9 @@ double getRandomTimeout(){
 void getStateFromStorage(){
 
     FILE *fp;
-    char *addr_path=strdup(env.addr_str);
-    for(int i=0;i<strlen(addr_path);i++){
-        if(addr_path[i]=='/')addr_path[i]='_';
-    }
+    char addr_path[10];
+    snprintf(addr_path,10,"%d",state.id);
+
     fp=fopen(addr_path,"r");
     if(fp==NULL){
         fp=fopen(addr_path,"w");
@@ -115,16 +114,11 @@ void getStateFromStorage(){
         fscanf(fp,"%d",&state.n);
         state.log=malloc(sizeof(logEntry)*state.n);
         for(int i=0;i<state.n;i++){
-            state.log[i].command=malloc(100);
-        }
-        for(int i=0;i<state.n;i++){
-            fscanf(fp,"%d %s",&state.log[i].term,state.log[i].command);
+            fscanf(fp,"%d %d",&state.log[i].term,&state.log[i].command);
         }
         fclose(fp);
         ABT_mutex_unlock(mutex);
     }
-
-    free(addr_path);
 }
 
 //状態をストレージに保存する関数
@@ -134,10 +128,8 @@ void setStateToStorage(){
     printf("currentTerm:%d\n",state.currentTerm);
     ABT_mutex_unlock(mutex);
 
-    char *addr_path=strdup(env.addr_str);
-    for(int i=0;i<strlen(addr_path);i++){
-        if(addr_path[i]=='/')addr_path[i]='_';
-    }
+    char addr_path[10];
+    snprintf(addr_path,10,"%d",state.id);
 
     FILE *fp=fopen(addr_path,"w");
 
@@ -146,19 +138,71 @@ void setStateToStorage(){
         fprintf(fp,"%d %d\n",state.currentTerm,state.votedFor);
         fprintf(fp,"%d\n",state.n);
         for(int i=0;i<state.n;i++){
-            fprintf(fp,"%d %s\n",state.log[i].term,state.log[i].command);
+            fprintf(fp,"%d %d\n",state.log[i].term,state.log[i].command);
         }
         fclose(fp);
         ABT_mutex_unlock(mutex);
     }
+}
 
-    free(addr_path);
+//ステートマシンから状態を取得する関数
+int getStateFromStateMachine(){
+
+    FILE *fp;
+    int res=0;
+    char addr_path[10];
+    snprintf(addr_path,10,"%dS",state.id);
+
+    fp=fopen(addr_path,"r");
+    if(fp!=NULL){
+        fscanf(fp,"%d",&res);
+        fclose(fp);
+    }
+    return res;
+}
+
+//ステートマシンにコマンドを適用する関数
+void ApplyToStateMachine(int command){
+    FILE *fp;
+    int cur;
+    char addr_path[10];
+    snprintf(addr_path,10,"%dS",state.id);
+
+    fp=fopen(addr_path,"r");
+    if(fp!=NULL){
+        fscanf(fp,"%d",&cur);
+        fclose(fp);
+
+        fp=fopen(addr_path,"w");
+        if(fp!=NULL){
+            cur+=command;
+            fprintf(fp,"%d",cur);
+            fclose(fp);
+        }
+    }
+}
+
+
+//ステートマシンを初期化する関数
+void initStateMachine(){
+    FILE *fp;
+    char addr_path[10];
+    snprintf(addr_path,10,"%dS",state.id);
+
+    fp=fopen(addr_path,"w");
+    if(fp!=NULL){
+        fprintf(fp,"%d",0);
+        fclose(fp);
+        ABT_mutex_lock(mutex);
+        for(int i=0;i<state.n;i++){
+            ApplyToStateMachine(state.log[i].command);
+        }
+        ABT_mutex_unlock(mutex);
+    }  
 }
 
 //状態の初期化
 void init_state(){
-    //ストレージからの状態の取得
-    getStateFromStorage();
 
     ABT_mutex_lock(mutex);
     state.commitIndex=-1;
@@ -175,13 +219,19 @@ void init_state(){
     state.matchIndex=malloc(sizeof(int)*config.n);
     state.leaderId=-1;
     ABT_mutex_unlock(mutex);
+
+    //ストレージからの状態の取得
+    getStateFromStorage();
+
+    //ステートマシンの初期化
+    initStateMachine();
 }
 
 //設定の初期化
 void init_config(){
     config.n=3;
     config.server=malloc(sizeof(char*)*config.n);
-    char *tmp[]={"ofi+tcp://172.18.0.3:38255","ofi+tcp://172.18.0.2:38256","ofi+tcp://172.18.0.5:38257"};
+    char *tmp[]={"ofi+tcp://172.18.0.5:38255","ofi+tcp://172.18.0.4:38256","ofi+tcp://172.18.0.2:38257"};
     for(int i=0;i<3;i++){
         config.server[i]=strdup(tmp[i]);
     }
@@ -461,6 +511,7 @@ void startLeader(){
 
             while(state.commitIndex>state.lastApplied){
                 state.lastApplied++;
+                ApplyToStateMachine(state.log[state.lastApplied].command);
             }
 
             ABT_mutex_unlock(mutex);
@@ -511,11 +562,8 @@ main(int argc, char *argv[])
                 AppendEntries);
         env.RequestVote_rpc= MARGO_REGISTER(mid, "RequestVote", request_vote_in_t, request_vote_out_t,
                 RequestVote);
-        env.InstallSnapshot_rpc=MARGO_REGISTER(mid, "InstallSnapshot", install_snapshot_in_t, int32_t,
-                InstallSnapshot);
-        env.Submit_rpc=MARGO_REGISTER(mid, "Submit", hg_string_t, hg_bool_t,
+        env.Submit_rpc=MARGO_REGISTER(mid, "Submit", int32_t, int32_t,
                 Submit);
-
 
         //Raftの動作を開始
         while(1){
@@ -566,7 +614,7 @@ call_AppendEntries(const char *addr,append_entries_out_t *out2,int nLog,logEntry
     in.entries=malloc(sizeof(logEntry)*nLog);
     for(int i=0;i<nLog;i++){
         in.entries[i].term=entries[i].term;
-        in.entries[i].command=strdup(entries[i].command);
+        in.entries[i].command=entries[i].command;
     }
 
     ABT_mutex_lock(mutex);
@@ -582,10 +630,6 @@ call_AppendEntries(const char *addr,append_entries_out_t *out2,int nLog,logEntry
     ret=margo_forward_timed(h,&in,20);
     if(ret!=HG_SUCCESS)
         goto err;
-
-    for(int i=0;i<nLog;i++){
-        free(in.entries[i].command);
-    }
 
     free(in.entries);
 
@@ -658,11 +702,11 @@ err:
 
 //Submit RPCを呼び出す関数
 static hg_return_t
-call_Submit(const char *addr,hg_string_t in,hg_bool_t *res){
+call_Submit(const char *addr,int32_t in,int32_t *res){
     hg_handle_t h;
     hg_return_t ret,ret2;
     hg_addr_t serv_addr;
-    hg_bool_t out;
+    int32_t out;
 
     ret=margo_addr_lookup(env.mid,addr,&serv_addr);
 
@@ -755,7 +799,7 @@ AppendEntries(hg_handle_t h){
                     if(state.n<=baseIndex+i){
                         state.n++;
                         state.log=realloc(state.log,state.n*sizeof(logEntry));
-                        state.log[state.n-1].command=strdup(in.entries[i].command);
+                        state.log[state.n-1].command=in.entries[i].command;
                         state.log[state.n-1].term=in.entries[i].term;
                     }
                 }
@@ -769,6 +813,7 @@ AppendEntries(hg_handle_t h){
                 //ステートマシンに適用
                 while(state.commitIndex>state.lastApplied){
                     state.lastApplied++;
+                    ApplyToStateMachine(state.log[state.lastApplied].command);
                 }
             }
 
@@ -865,28 +910,12 @@ RequestVote(hg_handle_t h){
 }
 DEFINE_MARGO_RPC_HANDLER(RequestVote)
 
-static void
-InstallSnapshot(hg_handle_t h){
-        hg_return_t ret;
-        install_snapshot_in_t in;
-
-        ret = margo_get_input(h, &in);
-        assert(ret == HG_SUCCESS);
-
-        ret = margo_free_input(h, &in);
-        assert(ret == HG_SUCCESS);
-
-        ret = margo_destroy(h);
-        assert(ret == HG_SUCCESS);
-}
-DEFINE_MARGO_RPC_HANDLER(InstallSnapshot)
-
 //クライアントからのコマンドリクエストを受け取るRPC
 static void
 Submit(hg_handle_t h){
     hg_return_t ret;
-    hg_string_t in;
-    hg_bool_t out=false;
+    int32_t in;
+    int32_t out;
 
     printf("submit RPC\n");
 
@@ -906,7 +935,7 @@ Submit(hg_handle_t h){
         state.n++;
         state.log=realloc(state.log,state.n*sizeof(logEntry));
         state.log[state.n-1].term=state.currentTerm;
-        state.log[state.n-1].command=strdup(in);
+        state.log[state.n-1].command=in;
         ABT_mutex_unlock(mutex);
 
         //コマンドがコミットされたらクライアントに応答する
@@ -914,6 +943,7 @@ Submit(hg_handle_t h){
             ABT_mutex_lock(mutex);
             if(state.lastApplied>=index){
                 ABT_mutex_unlock(mutex);
+                out=getStateFromStateMachine();
                 break;
             }
             ABT_mutex_unlock(mutex);

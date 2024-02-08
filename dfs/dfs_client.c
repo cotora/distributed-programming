@@ -42,7 +42,7 @@ dfs_init(const char *server)
         hg_return_t ret;
 
         /* the 3rd argument should be 1 */
-        margo_instance_id mid = margo_init("na+sm", MARGO_CLIENT_MODE, 1, 3);
+        margo_instance_id mid = margo_init("tcp", MARGO_CLIENT_MODE, 1, 3);
         assert(mid);
 
         env.mid = mid;
@@ -223,9 +223,7 @@ dfuse_read(const char *path, char *buf, size_t size, off_t off,
         fd=fi->fh;
     }
 
-    
     //rdmaではない場合
-
     ret=margo_create(env.mid,env.addr,env.read_rpc,&h);
     if(ret!=HG_SUCCESS)return -1;
 
@@ -250,7 +248,6 @@ dfuse_read(const char *path, char *buf, size_t size, off_t off,
         }
     }
     margo_free_output(h,&resp);
-    
 
     /*
     //rdmaの場合
@@ -281,7 +278,7 @@ dfuse_read(const char *path, char *buf, size_t size, off_t off,
     margo_bulk_free(in.buf);
     margo_free_output(h,&resp);
     */
-
+    
 err:
     ret2=margo_destroy(h);
     if(ret==HG_SUCCESS)

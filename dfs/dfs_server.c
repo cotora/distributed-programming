@@ -37,7 +37,7 @@ int main(int argc,char *argv[]){
 	size_t addr_str_size = sizeof(addr_str);
 	hg_addr_t my_address;
 
-	mid = margo_init("na+sm", MARGO_SERVER_MODE, 0, 0);
+	mid = margo_init("tcp", MARGO_SERVER_MODE, 0, 0);
 	assert(mid);
 
 	margo_addr_self(mid, &my_address);
@@ -220,7 +220,6 @@ read_s(hg_handle_t h){
         out.n=0;
     }
     else{
-        printf("out.n : %d\n",ret2);
         out.error=0;
         out.n=ret2;
     }

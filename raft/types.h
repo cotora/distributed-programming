@@ -3,7 +3,7 @@
 #include <mercury_proc_string.h>
 
 MERCURY_GEN_PROC(logEntry_t,
-    ((hg_string_t)(command))\
+    ((int32_t)(command))\
     ((int32_t)(term))
 )
 
@@ -73,63 +73,6 @@ MERCURY_GEN_PROC(request_vote_out_t,
     ((int32_t)(term))\
     ((hg_bool_t)(voteGranted))
 )
-
-typedef struct install_snapshot_in{
-    int32_t term;
-    int32_t leaderId;
-    int32_t lastIncludedIndex;
-    int32_t lastIncludedTerm;
-    int32_t offset;
-    int32_t n;
-    int32_t *data;
-    hg_bool_t done;
-} install_snapshot_in_t;
-
-static inline hg_return_t
-hg_proc_install_snapshot_in_t(hg_proc_t proc, void *data)
-{
-    install_snapshot_in_t *d=data;
-    hg_return_t ret;
-    int i;
-
-    ret = hg_proc_int32_t(proc,&d->term);
-    if(ret != HG_SUCCESS)
-        return (ret);
-    ret = hg_proc_int32_t(proc,&d->leaderId);
-    if(ret != HG_SUCCESS)
-        return (ret);
-    ret = hg_proc_int32_t(proc,&d->lastIncludedIndex);
-    if(ret != HG_SUCCESS)
-        return (ret);
-    ret = hg_proc_int32_t(proc,&d->lastIncludedTerm);
-    if(ret != HG_SUCCESS)
-        return (ret);
-    ret = hg_proc_int32_t(proc,&d->offset);
-    if(ret != HG_SUCCESS)
-        return (ret);
-    ret = hg_proc_int32_t(proc,&d->n);
-    if(ret != HG_SUCCESS)
-        return (ret);
-
-    if(hg_proc_get_op(proc)== HG_DECODE)
-        d->data = malloc(sizeof(int32_t) * d->n);
-    for(i=0;i<d->n;++i) {
-        ret=hg_proc_int32_t(proc,&d->data[i]);
-        if(ret != HG_SUCCESS)
-            return (ret);
-    }
-    if(hg_proc_get_op(proc) == HG_FREE)
-        free(d->data);
-    
-    ret = hg_proc_hg_bool_t(proc,&d->done);
-    if(ret != HG_SUCCESS)
-        return (ret);
-
-    return ret;
-}
-
-
-
 
 
 
