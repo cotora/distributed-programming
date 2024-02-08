@@ -938,7 +938,7 @@ Submit(hg_handle_t h){
         state.log[state.n-1].command=in;
         ABT_mutex_unlock(mutex);
 
-        //コマンドがコミットされたらクライアントに応答する
+        //コマンドがステートマシンに適用されたらクライアントに応答する
         while(1){
             ABT_mutex_lock(mutex);
             if(state.lastApplied>=index){
